@@ -2,71 +2,31 @@ package org.example;
 
 import io.muserver.*;
 
-import java.util.Map;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
-
 public class PaymentServer {
+// This class is responsible for starting the MuServer and handling payment requests.
+    private final int port;
+    private final PaymentService paymentService;
+    private MuServer server;
 
-    private static final Map<String, AtomicLong> payments = new ConcurrentHashMap<>();
-    private static final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+    public PaymentServer(int port) {
+        this.port = port;
+        this.paymentService = new PaymentService();
+    }
 
-    public static void main(String[] args) {
-
-        // Start scheduled task to print payment summary every 60 seconds
-        scheduler.scheduleAtFixedRate(PaymentServer::printPayments, 1, 60, TimeUnit.SECONDS);
-
-        // Create and start MuServer
-        MuServer server = MuServerBuilder.httpServer().addHandler(Method.POST, "/payment/",(request, response, pathParams) -> {
-                    if (request.uri().getPath().startsWith("/payment")) {
-                        handlePaymentRequest(String.valueOf(request.uri()), response);
-                    } else {
-                        response.status(404);
-                        response.write("Endpoint not found.");
-                    }
-                })
+    public void start() {
+        server = MuServerBuilder.httpServer()
+                .withHttpPort(port)
+                .addHandler(Method.POST, "/payment/{CUR}/{amount}",
+                        (request, response, pathParams) -> paymentService.handlePayment(pathParams, response))
                 .start();
 
         System.out.println("Server started at: " + server.uri());
     }
 
-    private static void handlePaymentRequest(String uri, MuResponse response) {
-        // Expected format: /payment/<CUR>/<AMOUNT>
-        String[] parts = uri.split("/");
-        if (parts.length != 4) {
-            response.status(400);
-            response.write("Invalid URI. Expected format: /payment/<CUR>/<AMOUNT>");
-            return;
+    public void stop() {
+        if (server != null) {
+            server.stop();
         }
-
-        String currency = parts[2].toUpperCase();
-        long amount;
-
-        try {
-            amount = Long.parseLong(parts[3]);
-        } catch (NumberFormatException e) {
-            response.status(400);
-            response.write("Amount must be a number.");
-            return;
-        }
-
-        payments.computeIfAbsent(currency, k -> new AtomicLong()).addAndGet(amount);
-        response.status(200);
-        response.write("Payment recorded: " + currency + " " + amount);
-    }
-
-    private static void printPayments() {
-        System.out.println("----- Payment Summary -----");
-        if (payments.isEmpty()) {
-            System.out.println("No payments recorded yet.");
-        } else {
-            payments.forEach((currency, total) -> {
-                long value = total.get();
-                if (value != 0) {
-                    System.out.println(currency + " " + value);
-                }
-            });
-        }
-        System.out.println("---------------------------");
+        paymentService.shutdown();
     }
 }
